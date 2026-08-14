@@ -7,15 +7,12 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "test": "tsx --test test/**/*.test.ts",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "audit:runtime": "npm audit --omit=dev"
   },
-  "dependencies": {
-    "@opensea/sdk": "11.7.0",
-    "@reservoir0x/reservoir-sdk": "2.5.7",
-    "ethers": "6.17.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.0.0",
     "tsx": "4.23.1",
