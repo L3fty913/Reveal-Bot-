@@ -65,6 +65,14 @@ function parseTraits(raw: Json | undefined): Trait[] {
   });
 }
 
+export interface DiscoveredToken {
+  nft: NftSnapshot;
+  floorAskEth: number;
+  topBidEth: number;
+  rarityRank?: number;
+  lastSaleEth?: number;
+}
+
 export class ReservoirClient {
   constructor(private readonly config: Pick<AppConfig, "reservoirApiBase" | "reservoirApiKey">) {}
 
@@ -77,10 +85,57 @@ export class ReservoirClient {
     return await response.json() as Json;
   }
 
+  async discoverListedTokens(collectionId: string, contract: Address, limit = 25, chainId = 1): Promise<DiscoveredToken[]> {
+    const params = new URLSearchParams({
+      collection: collectionId,
+      sortBy: "floorAskPrice",
+      sortDirection: "asc",
+      includeTopBid: "true",
+      includeAttributes: "true",
+      includeLastSale: "true",
+      normalizeRoyalties: "true",
+      flagStatus: "0",
+      limit: String(Math.min(Math.max(1, limit), 100)),
+    });
+    const payload = await this.get("/tokens/v6", params);
+    return asArray(path(payload, ["tokens"])).flatMap((row) => {
+      const token = asObject(path(row, ["token"]));
+      const tokenId = asString(token.tokenId);
+      if (!tokenId) return [];
+      const tokenContract = (asString(token.contract) ?? contract) as Address;
+      const floorAskEth = firstNumber(row, [
+        ["market", "floorAsk", "price", "amount", "decimal"],
+        ["market", "floorAsk", "price", "decimal"],
+        ["token", "floorAskPrice"],
+      ]) ?? 0;
+      const topBidEth = firstNumber(row, [
+        ["market", "topBid", "price", "amount", "decimal"],
+        ["market", "topBid", "price", "decimal"],
+      ]) ?? 0;
+      const rarityRank = firstNumber(row, [["token", "rarityRank"], ["token", "rarity", "rank"]]);
+      const lastSaleEth = firstNumber(row, [
+        ["market", "lastSale", "price", "amount", "decimal"],
+        ["market", "lastSale", "price", "decimal"],
+        ["token", "lastSale", "price", "amount", "decimal"],
+      ]);
+      const nft: NftSnapshot = {
+        chainId,
+        contract: tokenContract,
+        tokenId,
+        collectionId,
+        name: asString(token.name),
+        traits: parseTraits(token.attributes),
+        observedAt: Date.now(),
+      };
+      return [{ nft, floorAskEth, topBidEth, rarityRank, lastSaleEth }];
+    });
+  }
+
   async getToken(collectionId: string, contract: Address, tokenId: string, chainId = 1): Promise<NftSnapshot> {
     const params = new URLSearchParams();
     params.append("tokens", tokenKey(contract, tokenId));
     params.set("includeLastSale", "true");
+    params.set("includeAttributes", "true");
     const payload = await this.get("/tokens/v6", params);
     const row = asObject(asArray(path(payload, ["tokens"]))[0]);
     const token = asObject(row.token);
