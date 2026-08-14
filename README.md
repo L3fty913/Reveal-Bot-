@@ -1,97 +1,163 @@
-# Reveal Bot — NFT Quant Trading Engine
+# Reveal Bot — Standalone NFT Quant Engine
 
-A standalone, modular NFT market-analysis, paper-trading, and trade-proposal engine for EVM NFT markets.
+Reveal Bot is a standalone NFT market-analysis, paper-trading, and trade-proposal engine for EVM NFT markets.
 
-> No strategy can guarantee profit. Reveal Bot is designed to measure expected edge after marketplace fees, royalties, gas, slippage, inventory risk, liquidity, and adverse selection, and to reject opportunities that do not clear configured risk/edge thresholds.
+> No strategy can guarantee profit. The engine is built to reject weak trades by measuring expected edge after marketplace fees, royalties, gas, slippage, inventory concentration, liquidity, uncertainty, and adverse selection.
 
-## What it does
+## Current capabilities
 
-- Aggregates listings, bids, sales, floors, traits, and liquidity through Reservoir.
-- Keeps OpenSea SDK/Seaport available as a first-party OpenSea integration layer.
-- Normalizes marketplace data into one order/sales model.
+- Pulls normalized NFT listings, bids, sales, collection data, token metadata, and traits from Reservoir using native HTTP.
+- Automatically discovers the cheapest listed candidates in a collection; manually supplied token IDs are optional.
 - Calculates trait-aware fair value from recency-weighted comparable sales, floor, top bid, liquidity, and trait similarity.
-- Applies conservative liquidity and uncertainty haircuts before estimating an exit.
-- Calculates **net expected profit and edge after costs**.
-- Detects token mispricing, bid-to-floor spreads, and executable cross-market ask/bid dislocations.
-- Enforces portfolio risk controls before producing a trade proposal.
-- Supports historical walk-forward testing and paper-mode operation.
-- Produces short-lived, human-authorized trade proposals instead of storing a wallet private key or signing transactions unattended.
+- Applies dynamic liquidity and uncertainty haircuts to create a conservative modeled exit value.
+- Calculates net expected profit and expected edge after modeled costs.
+- Detects trait mispricing, bid-to-floor spreads, and executable cross-market ask/bid dislocations.
+- Enforces portfolio risk limits before an opportunity can become a proposal.
+- Persists scan history, scored opportunities, and expiring proposals in SQLite.
+- Runs one-off scans or a continuous multi-collection watchlist daemon.
+- Exposes a local review API for listing, approving, or rejecting queued proposals.
+- Includes a walk-forward historical-sale backtester, unit tests, runtime dependency audit, strict TypeScript checks, and GitHub Actions CI.
+
+Reveal Bot does **not** store wallet private keys, autonomously sign transactions, or broadcast purchases/sales. Proposal approval is review state only.
 
 ## Architecture
 
 ```text
-Reservoir / OpenSea Market Data
-              |
-              v
-   Normalized Orders + Sales
-              |
-              v
-      Trait Valuation Engine
-              |
-              v
-      Opportunity Scanner
-              |
-              v
-         Risk Engine
-              |
-       APPROVE / REJECT
-              |
-              v
-   Paper Result / Trade Proposal
-              |
-              v
-        PnL + Evaluation
+Reservoir Market Data
+        |
+        v
+Candidate Discovery
+        |
+        v
+Normalized Orders + Sales
+        |
+        v
+Trait Valuation Engine
+        |
+        v
+Opportunity Scanner
+        |
+        v
+Risk Engine
+        |
+  APPROVE / REJECT
+        |
+        v
+Paper Result / Expiring Proposal
+        |
+        +----> SQLite State
+        |
+        +----> Local Review API
 ```
 
-## Strategies in the deterministic core
+## Deterministic strategies
 
 1. **Trait mispricing** — compare the cheapest executable ask with a conservative trait-adjusted exit value.
 2. **Cross-market arbitrage detection** — compare executable ask and bid liquidity and subtract all modeled costs.
-3. **Bid-to-floor spread** — calculate a bid level from the current top bid/floor relationship and reject it unless modeled resale edge survives costs.
-
-Planned strategy modules can add inventory-aware market making, collection/trait offer optimization, floor-depth sweeps, and portfolio rebalancing without changing the domain/risk layer.
+3. **Bid-to-floor spread** — calculate a candidate bid from the current top-bid/floor relationship and reject it unless modeled resale edge survives costs.
 
 The engine explicitly excludes self-dealing, wash trading, fake-volume generation, spoofing, or coordinated manipulation.
 
-## Quick start
+## Install
 
 ```bash
 npm install
 cp .env.example .env
+npm run audit:runtime
 npm run check
 npm test
+```
 
-# Example scan
-npm run dev -- \
-  --collection 0xCOLLECTION_OR_RESERVOIR_COLLECTION_ID \
-  --contract 0xCONTRACT_ADDRESS \
+Set `RESERVOIR_API_KEY` in `.env` for production use.
+
+## Autonomous collection scan
+
+Omit `--tokens` and Reveal Bot discovers listed candidates automatically:
+
+```bash
+npm run scan -- \
+  --collection YOUR_RESERVOIR_COLLECTION_ID \
+  --contract 0xYOUR_CONTRACT \
+  --discover 25 \
+  --concurrency 4 \
+  --cash 1.0 \
+  --gas 0.003
+```
+
+To deep-scan specific tokens instead:
+
+```bash
+npm run scan -- \
+  --collection YOUR_RESERVOIR_COLLECTION_ID \
+  --contract 0xYOUR_CONTRACT \
   --tokens 1,2,3,4,5 \
   --cash 1.0 \
   --gas 0.003
 ```
 
-The command returns collection state, comparable-sale count, every scored opportunity, each risk decision, and the proposals that survived the configured thresholds.
+In `TRADING_MODE=paper`, approved opportunities are returned but not queued. In `TRADING_MODE=proposal`, approved opportunities are also persisted as short-lived review proposals.
+
+## Continuous multi-collection daemon
+
+```bash
+cp watchlist.example.json watchlist.json
+# Edit watchlist.json with real collections/contracts and capital assumptions.
+npm run daemon
+```
+
+Each target can define `collectionId`, `contract`, optional `tokenIds`, `discoverLimit`, `concurrency`, modeled `cashEth`, and `gasEth`. A failure on one collection is isolated so the daemon can continue scanning the rest of the watchlist.
+
+## Proposal review API
+
+The review service binds to `127.0.0.1` by default.
+
+```bash
+# Configure a strong REVIEW_API_TOKEN in .env before enabling mutations.
+npm run serve
+```
+
+Endpoints:
+
+```text
+GET  /health
+GET  /proposals?limit=50
+POST /proposals/:id/approve
+POST /proposals/:id/reject
+```
+
+Mutation requests require `Authorization: Bearer <REVIEW_API_TOKEN>`. Approving a proposal never signs or submits an on-chain transaction.
 
 ## Risk controls
 
-Defaults are deliberately restrictive and live in `.env.example`:
+Configured in `.env`:
 
 - minimum expected edge
 - minimum valuation confidence
 - maximum single-trade size
 - maximum collection exposure
 - maximum total inventory
-- maximum daily loss
+- maximum daily loss circuit breaker
 - maximum gas estimate
 - maximum market-data age
 - maximum open bids per collection
 
 ## Backtesting
 
-`src/backtest.ts` contains a walk-forward historical-sale backtester. It never uses future sales to create an entry signal. It measures resolved trades, unresolved signals, win rate, net PnL, average return, and maximum drawdown after modeled fees, royalties, slippage, and gas.
+`src/backtest.ts` contains a walk-forward historical-sale backtester. Entry signals only use prior sales. It reports resolved/unresolved signals, win rate, net PnL, average return, and maximum drawdown after modeled fees, royalties, slippage, and gas.
+
+Historical repeat-sale testing is useful for strategy calibration but is not a substitute for historical order-book replay.
 
 ## Repository status
 
-**Build 000 complete:** domain model, config, Reservoir adapter, trait valuation, opportunity scanner, portfolio risk engine, proposal generator, historical backtester, unit tests, and CI.
+**Operational core complete:** normalized domain model, configuration, Reservoir adapter, autonomous discovery, trait valuation, opportunity scanning, risk engine, proposal generation, SQLite persistence, local review API, multi-collection daemon, historical backtesting, tests, runtime audit, and CI.
 
-Next build should focus on real-time websocket ingestion, persistent orderbook/state, portfolio accounting, strategy calibration, and a review UI for approving/rejecting generated proposals.
+### Highest-value next upgrades
+
+- Reservoir WebSocket ingestion for near-real-time order creation/cancellation/top-bid changes.
+- True order-book depth and source-specific marketplace fee/royalty modeling instead of generic cost assumptions.
+- Wallet/portfolio reconciliation so inventory exposure and realized/unrealized PnL come from actual holdings rather than modeled state.
+- Historical order-book capture/replay for statistically meaningful strategy validation.
+- Strategy calibration by collection regime, liquidity, volatility, hold time, and trait cohort.
+- A review dashboard and transaction-builder output that a user-controlled wallet can inspect and sign.
+
+Those upgrades improve execution quality and evidence of edge; they still cannot guarantee profitability.
