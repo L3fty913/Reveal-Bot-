@@ -1,0 +1,12 @@
+{
+  "targets": [
+    {
+      "collectionId": "replace-with-reservoir-collection-id",
+      "contract": "0x0000000000000000000000000000000000000000",
+      "discoverLimit": 25,
+      "concurrency": 4,
+      "cashEth": 1.0,
+      "gasEth": 0.003
+    }
+  ]
+}
