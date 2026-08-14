@@ -6,6 +6,8 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "dev": "tsx src/main.ts",
+    "scan": "tsx src/main.ts",
+    "serve": "tsx src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/main.js",
     "test": "tsx --test test/**/*.test.ts",
