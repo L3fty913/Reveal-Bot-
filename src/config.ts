@@ -14,6 +14,8 @@ export interface AppConfig {
   tradingMode: TradingMode;
   chain: string;
   pollIntervalMs: number;
+  databasePath: string;
+  serverPort: number;
   reservoirApiKey: string;
   reservoirApiBase: string;
   openSeaApiKey: string;
@@ -48,6 +50,8 @@ export function loadConfig(): AppConfig {
     tradingMode,
     chain: str("CHAIN", "ethereum"),
     pollIntervalMs: num("POLL_INTERVAL_MS", 5000),
+    databasePath: str("DATABASE_PATH", "reveal-bot.db"),
+    serverPort: num("SERVER_PORT", 8787),
     reservoirApiKey: str("RESERVOIR_API_KEY"),
     reservoirApiBase: str("RESERVOIR_API_BASE", "https://api.reservoir.tools"),
     openSeaApiKey: str("OPENSEA_API_KEY"),
@@ -74,6 +78,7 @@ export function loadConfig(): AppConfig {
     },
   };
 
+  if (cfg.serverPort < 1 || cfg.serverPort > 65_535) throw new Error("SERVER_PORT must be between 1 and 65535");
   if (cfg.risk.minExpectedEdgeBps < 0) throw new Error("MIN_EXPECTED_EDGE_BPS cannot be negative");
   if (cfg.risk.maxSingleTradeEth <= 0) throw new Error("MAX_SINGLE_TRADE_ETH must be positive");
   if (cfg.risk.minConfidence < 0 || cfg.risk.minConfidence > 1) throw new Error("MIN_CONFIDENCE must be between 0 and 1");
