@@ -1,65 +1,97 @@
 # Reveal Bot — NFT Quant Trading Engine
 
-A modular, profit-seeking NFT trading and market-making engine for EVM NFT markets.
+A standalone, modular NFT market-analysis, paper-trading, and trade-proposal engine for EVM NFT markets.
 
-> No strategy can guarantee profit. This repository is engineered to measure expected edge after marketplace fees, royalties, gas, slippage, inventory risk, and adverse selection, and to refuse trades that do not clear configured risk/edge thresholds.
+> No strategy can guarantee profit. Reveal Bot is designed to measure expected edge after marketplace fees, royalties, gas, slippage, inventory risk, liquidity, and adverse selection, and to reject opportunities that do not clear configured risk/edge thresholds.
 
-## Design goals
+## What it does
 
-- Aggregate listings, bids, sales, floors, traits, and liquidity across marketplaces.
-- Use Reservoir for normalized cross-market data/routing and OpenSea SDK/Seaport for native OpenSea execution.
-- Support token offers, collection offers, trait offers, floor sweeping, relisting, inventory rebalancing, and cross-market arbitrage detection.
-- Trait-aware fair-value estimation using recent sales, floor depth, top bids, rarity/trait premiums, liquidity, and time decay.
-- Strict pre-trade risk engine: max inventory, max collection exposure, max daily loss, max gas, min expected edge, stale-data rejection, self-trade/wash-trade prevention, and circuit breakers.
-- Paper trading and backtesting are first-class. Live trading is opt-in.
-- Full PnL attribution: realized/unrealized PnL, fees, royalties, gas, inventory mark, and strategy attribution.
-- Event-driven adapters so additional marketplaces/chains can be added without rewriting strategy logic.
+- Aggregates listings, bids, sales, floors, traits, and liquidity through Reservoir.
+- Keeps OpenSea SDK/Seaport available as a first-party OpenSea integration layer.
+- Normalizes marketplace data into one order/sales model.
+- Calculates trait-aware fair value from recency-weighted comparable sales, floor, top bid, liquidity, and trait similarity.
+- Applies conservative liquidity and uncertainty haircuts before estimating an exit.
+- Calculates **net expected profit and edge after costs**.
+- Detects token mispricing, bid-to-floor spreads, and executable cross-market ask/bid dislocations.
+- Enforces portfolio risk controls before producing a trade proposal.
+- Supports historical walk-forward testing and paper-mode operation.
+- Produces short-lived, human-authorized trade proposals instead of storing a wallet private key or signing transactions unattended.
 
 ## Architecture
 
 ```text
-Market Data
-  Reservoir REST/WebSocket
-  OpenSea REST/SDK/Seaport
-        |
-        v
-Normalized Order Book + Sales Tape
-        |
-        v
-Valuation Engine ----> Opportunity Scanner
-        |                    |
-        v                    v
-Portfolio State ------> Strategy Engine
-        |                    |
-        +------> Risk Engine <+
-                      |
-                APPROVE / REJECT
-                      |
-                      v
-                Execution Engine
-                 paper | live
-                      |
-                      v
-              PnL / Audit Journal
+Reservoir / OpenSea Market Data
+              |
+              v
+   Normalized Orders + Sales
+              |
+              v
+      Trait Valuation Engine
+              |
+              v
+      Opportunity Scanner
+              |
+              v
+         Risk Engine
+              |
+       APPROVE / REJECT
+              |
+              v
+   Paper Result / Trade Proposal
+              |
+              v
+        PnL + Evaluation
 ```
 
-## Initial strategies
+## Strategies in the deterministic core
 
-1. **Bid-to-floor spread** — place bids only when modeled resale value clears all costs plus required edge.
-2. **Trait mispricing** — buy/list NFTs where trait-adjusted fair value materially differs from ask.
-3. **Cross-market arbitrage** — detect executable ask/bid dislocations across aggregated venues.
-4. **Inventory market making** — maintain bids and asks around fair value while skewing quotes based on inventory.
-5. **Liquidity sweeps** — opportunistically buy thin underpriced listings only when exit liquidity is measurable.
+1. **Trait mispricing** — compare the cheapest executable ask with a conservative trait-adjusted exit value.
+2. **Cross-market arbitrage detection** — compare executable ask and bid liquidity and subtract all modeled costs.
+3. **Bid-to-floor spread** — calculate a bid level from the current top bid/floor relationship and reject it unless modeled resale edge survives costs.
+
+Planned strategy modules can add inventory-aware market making, collection/trait offer optimization, floor-depth sweeps, and portfolio rebalancing without changing the domain/risk layer.
 
 The engine explicitly excludes self-dealing, wash trading, fake-volume generation, spoofing, or coordinated manipulation.
 
-## Safety defaults
+## Quick start
 
-- `TRADING_MODE=paper`
-- Live execution requires `LIVE_TRADING=true` and a separate funded execution wallet.
-- Keep only limited strategy capital in the hot wallet.
-- Never commit private keys or API keys.
+```bash
+npm install
+cp .env.example .env
+npm run check
+npm test
 
-## Status
+# Example scan
+npm run dev -- \
+  --collection 0xCOLLECTION_OR_RESERVOIR_COLLECTION_ID \
+  --contract 0xCONTRACT_ADDRESS \
+  --tokens 1,2,3,4,5 \
+  --cash 1.0 \
+  --gas 0.003
+```
 
-Build 000: repository foundation and deterministic strategy/risk core.
+The command returns collection state, comparable-sale count, every scored opportunity, each risk decision, and the proposals that survived the configured thresholds.
+
+## Risk controls
+
+Defaults are deliberately restrictive and live in `.env.example`:
+
+- minimum expected edge
+- minimum valuation confidence
+- maximum single-trade size
+- maximum collection exposure
+- maximum total inventory
+- maximum daily loss
+- maximum gas estimate
+- maximum market-data age
+- maximum open bids per collection
+
+## Backtesting
+
+`src/backtest.ts` contains a walk-forward historical-sale backtester. It never uses future sales to create an entry signal. It measures resolved trades, unresolved signals, win rate, net PnL, average return, and maximum drawdown after modeled fees, royalties, slippage, and gas.
+
+## Repository status
+
+**Build 000 complete:** domain model, config, Reservoir adapter, trait valuation, opportunity scanner, portfolio risk engine, proposal generator, historical backtester, unit tests, and CI.
+
+Next build should focus on real-time websocket ingestion, persistent orderbook/state, portfolio accounting, strategy calibration, and a review UI for approving/rejecting generated proposals.
