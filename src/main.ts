@@ -4,6 +4,7 @@ import { buildTradeProposal } from "./proposal.js";
 import { ReservoirClient, type DiscoveredToken } from "./reservoir.js";
 import { RiskEngine } from "./risk.js";
 import { OpportunityScanner } from "./scanner.js";
+import { StateStore } from "./store.js";
 import { ValuationEngine } from "./valuation.js";
 
 interface Args {
@@ -60,73 +61,95 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 }
 
 async function main(): Promise<void> {
+  const startedAt = Date.now();
   const config = loadConfig();
   const args = parseArgs(process.argv.slice(2));
-  const reservoir = new ReservoirClient(config);
-  const valuationEngine = new ValuationEngine(config.valuation);
-  const scanner = new OpportunityScanner(config.valuation);
-  const risk = new RiskEngine(config.risk);
+  const store = new StateStore(config.databasePath);
 
-  const portfolio: PortfolioState = {
-    cashEth: args.cashEth,
-    realizedPnlEth: 0,
-    unrealizedPnlEth: 0,
-    dailyPnlEth: 0,
-    positions: [],
-    openOrders: [],
-  };
+  try {
+    const reservoir = new ReservoirClient(config);
+    const valuationEngine = new ValuationEngine(config.valuation);
+    const scanner = new OpportunityScanner(config.valuation);
+    const risk = new RiskEngine(config.risk);
 
-  const [market, sales] = await Promise.all([
-    reservoir.getCollectionMarket(args.collection),
-    reservoir.getSales(args.collection, args.contract, config.valuation.saleLookbackHours),
-  ]);
+    const portfolio: PortfolioState = {
+      cashEth: args.cashEth,
+      realizedPnlEth: 0,
+      unrealizedPnlEth: 0,
+      dailyPnlEth: 0,
+      positions: [],
+      openOrders: [],
+    };
 
-  let discovered: DiscoveredToken[] = [];
-  let tokenIds = args.tokens;
-  if (tokenIds.length === 0) {
-    discovered = await reservoir.discoverListedTokens(args.collection, args.contract, args.discoverLimit);
-    tokenIds = discovered
-      .filter((candidate) => candidate.floorAskEth > 0)
-      .sort((a, b) => {
-        const aSpread = a.floorAskEth > 0 ? a.topBidEth / a.floorAskEth : 0;
-        const bSpread = b.floorAskEth > 0 ? b.topBidEth / b.floorAskEth : 0;
-        return bSpread - aSpread || a.floorAskEth - b.floorAskEth;
-      })
-      .map((candidate) => candidate.nft.tokenId);
-  }
-
-  const discoveredByToken = new Map(discovered.map((candidate) => [candidate.nft.tokenId, candidate]));
-  const batches = await mapLimit(tokenIds, args.concurrency, async (tokenId) => {
-    const candidate = discoveredByToken.get(tokenId);
-    const [nft, orders] = await Promise.all([
-      candidate ? Promise.resolve(candidate.nft) : reservoir.getToken(args.collection, args.contract, tokenId),
-      reservoir.getOrders(args.collection, args.contract, tokenId),
+    const [market, sales] = await Promise.all([
+      reservoir.getCollectionMarket(args.collection),
+      reservoir.getSales(args.collection, args.contract, config.valuation.saleLookbackHours),
     ]);
-    const valuation = valuationEngine.estimate({ nft, market, sales });
-    return scanner.scanToken({ nft, market, valuation, asks: orders.asks, bids: orders.bids, gasEth: args.gasEth });
-  });
 
-  const opportunities: Opportunity[] = batches.flat();
-  const ranked = opportunities
-    .map((opportunity) => {
-      const decision = risk.evaluate(opportunity, portfolio);
-      const proposal = buildTradeProposal(opportunity, decision);
-      return { opportunity, decision, proposal };
-    })
-    .sort((a, b) => (b.opportunity.expectedEdgeBps * b.opportunity.confidence) - (a.opportunity.expectedEdgeBps * a.opportunity.confidence));
+    let discovered: DiscoveredToken[] = [];
+    let tokenIds = args.tokens;
+    if (tokenIds.length === 0) {
+      discovered = await reservoir.discoverListedTokens(args.collection, args.contract, args.discoverLimit);
+      tokenIds = discovered
+        .filter((candidate) => candidate.floorAskEth > 0)
+        .sort((a, b) => {
+          const aSpread = a.floorAskEth > 0 ? a.topBidEth / a.floorAskEth : 0;
+          const bSpread = b.floorAskEth > 0 ? b.topBidEth / b.floorAskEth : 0;
+          return bSpread - aSpread || a.floorAskEth - b.floorAskEth;
+        })
+        .map((candidate) => candidate.nft.tokenId);
+    }
 
-  const approved: TradeProposal[] = ranked.flatMap((row) => row.proposal ? [row.proposal] : []);
-  console.log(JSON.stringify({
-    mode: config.tradingMode,
-    collection: args.collection,
-    discoveryMode: args.tokens.length === 0,
-    tokensScanned: tokenIds.length,
-    market,
-    saleComparables: sales.length,
-    approvedCount: approved.length,
-    approved,
-    ranked,
-  }, null, 2));
+    const discoveredByToken = new Map(discovered.map((candidate) => [candidate.nft.tokenId, candidate]));
+    const batches = await mapLimit(tokenIds, args.concurrency, async (tokenId) => {
+      const candidate = discoveredByToken.get(tokenId);
+      const [nft, orders] = await Promise.all([
+        candidate ? Promise.resolve(candidate.nft) : reservoir.getToken(args.collection, args.contract, tokenId),
+        reservoir.getOrders(args.collection, args.contract, tokenId),
+      ]);
+      const valuation = valuationEngine.estimate({ nft, market, sales });
+      return scanner.scanToken({ nft, market, valuation, asks: orders.asks, bids: orders.bids, gasEth: args.gasEth });
+    });
+
+    const opportunities: Opportunity[] = batches.flat();
+    for (const opportunity of opportunities) store.upsertOpportunity(opportunity);
+
+    const ranked = opportunities
+      .map((opportunity) => {
+        const decision = risk.evaluate(opportunity, portfolio);
+        const proposal = buildTradeProposal(opportunity, decision);
+        return { opportunity, decision, proposal };
+      })
+      .sort((a, b) => (b.opportunity.expectedEdgeBps * b.opportunity.confidence) - (a.opportunity.expectedEdgeBps * a.opportunity.confidence));
+
+    const approved: TradeProposal[] = ranked.flatMap((row) => row.proposal ? [row.proposal] : []);
+    const queuedProposalIds = config.tradingMode === "proposal"
+      ? approved.map((proposal) => store.enqueueProposal(proposal))
+      : [];
+
+    store.recordScanRun({
+      startedAt,
+      collectionId: args.collection,
+      tokensScanned: tokenIds.length,
+      opportunities: opportunities.length,
+      approved: approved.length,
+    });
+
+    console.log(JSON.stringify({
+      mode: config.tradingMode,
+      collection: args.collection,
+      discoveryMode: args.tokens.length === 0,
+      tokensScanned: tokenIds.length,
+      market,
+      saleComparables: sales.length,
+      approvedCount: approved.length,
+      queuedProposalIds,
+      approved,
+      ranked,
+    }, null, 2));
+  } finally {
+    store.close();
+  }
 }
 
 main().catch((error: unknown) => {
