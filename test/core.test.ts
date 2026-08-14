@@ -97,7 +97,7 @@ test("scanner ranks an executable cross-market spread after costs", () => {
     gasEth: 0.003,
   });
   const arb = opportunities.find((x) => x.type === "cross_market_arbitrage");
-  assert.ok(arb);
+  if (!arb) assert.fail("expected a cross-market arbitrage opportunity");
   assert.ok(arb.expectedProfitEth > 0);
   assert.ok(arb.expectedEdgeBps > 0);
 });
