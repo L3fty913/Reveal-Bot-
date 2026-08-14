@@ -1,6 +1,6 @@
 # Reveal Bot — Standalone NFT Quant Engine
 
-Reveal Bot is a standalone NFT market-analysis, paper-trading, and trade-proposal engine for EVM NFT markets.
+Reveal Bot is a standalone NFT market-analysis, paper-mode opportunity evaluation, and trade-proposal engine for EVM NFT markets.
 
 > No strategy can guarantee profit. The engine is built to reject weak trades by measuring expected edge after marketplace fees, royalties, gas, slippage, inventory concentration, liquidity, uncertainty, and adverse selection.
 
@@ -8,6 +8,7 @@ Reveal Bot is a standalone NFT market-analysis, paper-trading, and trade-proposa
 
 - Pulls normalized NFT listings, bids, sales, collection data, token metadata, and traits from Reservoir using native HTTP.
 - Automatically discovers the cheapest listed candidates in a collection; manually supplied token IDs are optional.
+- Optionally listens to Reservoir real-time ask, bid, and sale events and immediately wakes the scanner, while retaining polling as a fallback.
 - Calculates trait-aware fair value from recency-weighted comparable sales, floor, top bid, liquidity, and trait similarity.
 - Applies dynamic liquidity and uncertainty haircuts to create a conservative modeled exit value.
 - Calculates net expected profit and expected edge after modeled costs.
@@ -23,31 +24,32 @@ Reveal Bot does **not** store wallet private keys, autonomously sign transaction
 ## Architecture
 
 ```text
-Reservoir Market Data
-        |
-        v
-Candidate Discovery
-        |
-        v
-Normalized Orders + Sales
-        |
-        v
-Trait Valuation Engine
-        |
-        v
-Opportunity Scanner
-        |
-        v
-Risk Engine
-        |
-  APPROVE / REJECT
-        |
-        v
-Paper Result / Expiring Proposal
-        |
-        +----> SQLite State
-        |
-        +----> Local Review API
+Reservoir HTTP + Optional WebSocket Events
+                   |
+                   v
+           Candidate Discovery
+                   |
+                   v
+        Normalized Orders + Sales
+                   |
+                   v
+          Trait Valuation Engine
+                   |
+                   v
+          Opportunity Scanner
+                   |
+                   v
+              Risk Engine
+                   |
+            APPROVE / REJECT
+                   |
+                   v
+      Paper Evaluation / Proposal
+                   |
+             +-----+-----+
+             |           |
+             v           v
+        SQLite State   Review API
 ```
 
 ## Deterministic strategies
@@ -95,7 +97,7 @@ npm run scan -- \
   --gas 0.003
 ```
 
-In `TRADING_MODE=paper`, approved opportunities are returned but not queued. In `TRADING_MODE=proposal`, approved opportunities are also persisted as short-lived review proposals.
+In `TRADING_MODE=paper`, approved opportunities are evaluated and returned but not queued. In `TRADING_MODE=proposal`, approved opportunities are also persisted as short-lived review proposals.
 
 ## Continuous multi-collection daemon
 
@@ -106,6 +108,18 @@ npm run daemon
 ```
 
 Each target can define `collectionId`, `contract`, optional `tokenIds`, `discoverLimit`, `concurrency`, modeled `cashEth`, and `gasEth`. A failure on one collection is isolated so the daemon can continue scanning the rest of the watchlist.
+
+### Optional real-time triggers
+
+Polling is always available. For lower-latency rescans, configure:
+
+```text
+REALTIME_ENABLED=true
+REALTIME_DEBOUNCE_MS=1500
+RESERVOIR_API_KEY=...
+```
+
+The watcher subscribes to filtered `ask.created`, `ask.updated`, `bid.created`, `bid.updated`, and `sale.created` events for watchlist contracts, reconnects with exponential backoff, and wakes the scanner when the market changes. Reservoir mainnet WebSockets require an eligible Data Syncing plan.
 
 ## Proposal review API
 
@@ -149,11 +163,10 @@ Historical repeat-sale testing is useful for strategy calibration but is not a s
 
 ## Repository status
 
-**Operational core complete:** normalized domain model, configuration, Reservoir adapter, autonomous discovery, trait valuation, opportunity scanning, risk engine, proposal generation, SQLite persistence, local review API, multi-collection daemon, historical backtesting, tests, runtime audit, and CI.
+**Operational core complete:** normalized domain model, configuration, Reservoir adapter, autonomous discovery, optional WebSocket market triggers, trait valuation, opportunity scanning, risk engine, proposal generation, SQLite persistence, local review API, multi-collection daemon, historical backtesting, tests, runtime audit, MIT license, and CI.
 
 ### Highest-value next upgrades
 
-- Reservoir WebSocket ingestion for near-real-time order creation/cancellation/top-bid changes.
 - True order-book depth and source-specific marketplace fee/royalty modeling instead of generic cost assumptions.
 - Wallet/portfolio reconciliation so inventory exposure and realized/unrealized PnL come from actual holdings rather than modeled state.
 - Historical order-book capture/replay for statistically meaningful strategy validation.
