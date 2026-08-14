@@ -2,7 +2,7 @@ export type Address = `0x${string}`;
 
 export type Venue = "opensea" | "reservoir" | "blur" | "magiceden" | "unknown";
 export type Side = "bid" | "ask";
-export type TradingMode = "paper" | "live";
+export type TradingMode = "paper" | "proposal";
 
 export interface NftId {
   chainId: number;
@@ -131,11 +131,23 @@ export interface RiskDecision {
   maxSpendEth: number;
 }
 
-export interface ExecutionResult {
-  status: "filled" | "submitted" | "rejected" | "simulated" | "failed";
+export interface TradeProposal {
   opportunityId: string;
-  txHash?: string;
-  orderId?: string;
+  action: "buy" | "bid" | "list" | "sell";
+  venue: Venue;
+  collectionId: string;
+  nft?: NftId;
+  limitPriceEth: number;
+  expectedProfitEth: number;
+  expectedEdgeBps: number;
+  expiresAt: number;
+  rationale: string[];
+}
+
+export interface ExecutionResult {
+  status: "proposed" | "rejected" | "simulated" | "failed";
+  opportunityId: string;
+  proposal?: TradeProposal;
   fillPriceEth?: number;
   costsEth?: number;
   reason?: string;
