@@ -15,7 +15,9 @@ export interface AppConfig {
   chain: string;
   pollIntervalMs: number;
   databasePath: string;
+  serverHost: string;
   serverPort: number;
+  reviewApiToken: string;
   reservoirApiKey: string;
   reservoirApiBase: string;
   openSeaApiKey: string;
@@ -51,7 +53,9 @@ export function loadConfig(): AppConfig {
     chain: str("CHAIN", "ethereum"),
     pollIntervalMs: num("POLL_INTERVAL_MS", 5000),
     databasePath: str("DATABASE_PATH", "reveal-bot.db"),
+    serverHost: str("SERVER_HOST", "127.0.0.1"),
     serverPort: num("SERVER_PORT", 8787),
+    reviewApiToken: str("REVIEW_API_TOKEN"),
     reservoirApiKey: str("RESERVOIR_API_KEY"),
     reservoirApiBase: str("RESERVOIR_API_BASE", "https://api.reservoir.tools"),
     openSeaApiKey: str("OPENSEA_API_KEY"),
