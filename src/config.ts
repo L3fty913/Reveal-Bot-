@@ -10,10 +10,20 @@ const num = (name: string, fallback: number): number => {
 
 const str = (name: string, fallback = ""): string => process.env[name] ?? fallback;
 
+const bool = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(`${name} must be true or false`);
+};
+
 export interface AppConfig {
   tradingMode: TradingMode;
   chain: string;
   pollIntervalMs: number;
+  realtimeEnabled: boolean;
+  realtimeDebounceMs: number;
   databasePath: string;
   serverHost: string;
   serverPort: number;
@@ -52,6 +62,8 @@ export function loadConfig(): AppConfig {
     tradingMode,
     chain: str("CHAIN", "ethereum"),
     pollIntervalMs: num("POLL_INTERVAL_MS", 5000),
+    realtimeEnabled: bool("REALTIME_ENABLED", false),
+    realtimeDebounceMs: num("REALTIME_DEBOUNCE_MS", 1500),
     databasePath: str("DATABASE_PATH", "reveal-bot.db"),
     serverHost: str("SERVER_HOST", "127.0.0.1"),
     serverPort: num("SERVER_PORT", 8787),
@@ -82,6 +94,8 @@ export function loadConfig(): AppConfig {
     },
   };
 
+  if (cfg.realtimeEnabled && !cfg.reservoirApiKey) throw new Error("REALTIME_ENABLED=true requires RESERVOIR_API_KEY");
+  if (cfg.realtimeDebounceMs < 250) throw new Error("REALTIME_DEBOUNCE_MS must be at least 250");
   if (cfg.serverPort < 1 || cfg.serverPort > 65_535) throw new Error("SERVER_PORT must be between 1 and 65535");
   if (cfg.risk.minExpectedEdgeBps < 0) throw new Error("MIN_EXPECTED_EDGE_BPS cannot be negative");
   if (cfg.risk.maxSingleTradeEth <= 0) throw new Error("MAX_SINGLE_TRADE_ETH must be positive");
